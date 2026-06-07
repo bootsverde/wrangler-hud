@@ -188,8 +188,8 @@ void handleMenu() {
 // ================= TRANSITION (non-blocking) =================
 void screenTransition() {
   // Simple fade to black – fast enough to feel snappy, no long block
-  for (int i = 0; i < 320; i += 40) {
-    tft.fillRect(i, 0, 40, 480, TFT_BLACK);
+  for (int i = 0; i < 480; i += 40) {
+    tft.fillRect(i, 0, 40, 320, TFT_BLACK);
     delay(5);
   }
 }
@@ -199,7 +199,6 @@ void calibrate() {
   pitchOffset   = pitch;
   rollOffset    = roll;
   headingOffset = heading;
-  heading       = 0;
 }
 
 // ================= HORIZON =================
@@ -244,7 +243,7 @@ void drawJeep(int cx, int cy) {
 
 // ================= OVERLAY =================
 void drawOverlay() {
-  hud.fillSprite(TFT_BLACK);
+  hud.fillSprite(TFT_TRANSPARENT);
   hud.setTextSize(2);
 
   // Heading
@@ -277,7 +276,7 @@ void drawOverlay() {
     hud.print("DANGER");
   }
 
-  hud.pushSprite(0, 0);
+  hud.pushSprite(0, 0, TFT_TRANSPARENT);
 }
 
 // ================= GPS SCREEN =================
@@ -318,7 +317,7 @@ void showBoot() {
   tft.fillScreen(TFT_BLACK);
   tft.setTextSize(3);
   tft.setTextColor(TFT_GREEN);
-  tft.setCursor(60, 150); tft.print("WRANGLER");
-  tft.setCursor(40, 200); tft.print("SYSTEM");
+  tft.setCursor(60, 120); tft.print("WRANGLER");
+  tft.setCursor(40, 160); tft.print("SYSTEM");
   delay(2000);
 }
