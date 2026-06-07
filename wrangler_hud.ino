@@ -1,21 +1,49 @@
-#include <TFT_eSPI.h>
+#include <Arduino_GFX_Library.h>
 #include <Wire.h>
 #include <Adafruit_LSM6DSOX.h>
 #include <TinyGPSPlus.h>
 
 // ================= DISPLAY =================
-TFT_eSPI tft = TFT_eSPI();
-TFT_eSprite hud = TFT_eSprite(&tft);
+// Waveshare ESP32-S3-Touch-LCD-4.3 — 800x480 RGB parallel panel.
+// Pin map per Waveshare's official Arduino reference for this board.
+Arduino_ESP32RGBPanel *bus = new Arduino_ESP32RGBPanel(
+    5 /* DE */, 3 /* VSYNC */, 46 /* HSYNC */, 7 /* PCLK */,
+    1, 2, 42, 41, 40,        /* R0-R4 */
+    39, 0, 45, 48, 47, 21,   /* G0-G5 */
+    14, 38, 18, 17, 10,      /* B0-B4 */
+    0 /* hsync_polarity */, 40 /* hsync_front_porch */, 48 /* hsync_pulse_width */, 88 /* hsync_back_porch */,
+    0 /* vsync_polarity */, 13 /* vsync_front_porch */, 3  /* vsync_pulse_width */, 32 /* vsync_back_porch */,
+    1 /* pclk_active_neg */, 16000000 /* prefer_speed */);
+
+Arduino_RGB_Display *gfx = new Arduino_RGB_Display(800, 480, bus);
+
+// Color-name shims so the drawing code below can stay close to the original
+// (Arduino_GFX's built-in palette doesn't include TFT_eSPI's NAVY/BROWN names).
+#define TFT_BLACK  BLACK
+#define TFT_WHITE  WHITE
+#define TFT_RED    RED
+#define TFT_GREEN  GREEN
+#define TFT_YELLOW YELLOW
+#define TFT_NAVY   0x000F
+#define TFT_BROWN  0x8200
 
 // ================= SENSORS =================
 Adafruit_LSM6DSOX imu;
 TinyGPSPlus gps;
 #define gpsSerial Serial1
 
+// Touch/IMU I2C bus pins for this board (shared bus; IMU and GT911 touch
+// can coexist as long as their addresses differ).
+#define I2C_SDA 8
+#define I2C_SCL 9
+
 // ================= ENCODER =================
-#define ENC_CLK 2
-#define ENC_DT  3
-#define ENC_SW  6
+// NOTE: original pins 2/3 collide with this board's display data lines
+// (R1 = GPIO2, VSYNC = GPIO3). Re-routed to GPIO 11/12/13 — confirm these
+// are broken out on your board's expansion header before wiring!
+#define ENC_CLK 11
+#define ENC_DT  12
+#define ENC_SW  13
 
 int      lastCLK;
 uint32_t lastBtnMs = 0;
@@ -41,19 +69,18 @@ const int   menuSize    = 4;
 void setup() {
   Serial.begin(115200);
 
-  tft.init();
-  tft.setRotation(1);
+  if (!gfx->begin()) {
+    Serial.println("gfx->begin() failed!");
+  }
+  gfx->fillScreen(TFT_BLACK);
 
-  // Sprite covers the full display (320 × 480 landscape = 480 × 320)
-  hud.createSprite(480, 320);
-
-  Wire.begin();
+  Wire.begin(I2C_SDA, I2C_SCL);
   if (!imu.begin_I2C()) {
-    tft.fillScreen(TFT_BLACK);
-    tft.setTextColor(TFT_RED);
-    tft.setTextSize(2);
-    tft.setCursor(40, 150);
-    tft.print("IMU NOT FOUND");
+    gfx->fillScreen(TFT_BLACK);
+    gfx->setTextColor(TFT_RED);
+    gfx->setTextSize(2);
+    gfx->setCursor(40, 220);
+    gfx->print("IMU NOT FOUND");
     while (1) delay(100);
   }
 
@@ -63,7 +90,7 @@ void setup() {
   pinMode(ENC_DT,  INPUT);
   pinMode(ENC_SW,  INPUT_PULLUP);
 
-  lastCLK   = digitalRead(ENC_CLK);
+  lastCLK    = digitalRead(ENC_CLK);
   lastLoopMs = millis();
 
   showBoot();
@@ -105,7 +132,7 @@ void readIMU(float dt) {
   pitch = pitch * (1.0f - alpha) + newPitch * alpha;
   roll  = roll  * (1.0f - alpha) + newRoll  * alpha;
 
-  // ---- Heading from gyro (dt-corrected, degrees/s → degrees) ----
+  // ---- Heading from gyro (dt-corrected, degrees/s -> degrees) ----
   heading += gyro.gyro.z * dt * 57.2958f;
   heading  = fmodf(heading, 360.0f);
   if (heading < 0) heading += 360.0f;
@@ -148,30 +175,29 @@ void readEncoder() {
 
 // ================= MENU =================
 void drawMenu() {
-  hud.fillSprite(TFT_BLACK);
+  gfx->fillScreen(TFT_BLACK);
 
-  float target = (float)(menuIndex * 30);
+  float target = (float)(menuIndex * 50);
   float delta  = target - menuOffsetF;
   menuOffsetF += delta * 0.3f;
   if (fabsf(delta) < 1.0f) menuOffsetF = target;  // snap when close
 
   for (int i = 0; i < menuSize; i++) {
-    int y = 50 + (i * 30) - (int)menuOffsetF;
-    hud.setTextColor(i == menuIndex ? TFT_YELLOW : TFT_WHITE);
-    drawIcon(40, y + 10, i);
-    hud.setCursor(70, y);
-    hud.print(menuItems[i]);
+    int y = 80 + (i * 50) - (int)menuOffsetF;
+    gfx->setTextSize(2);
+    gfx->setTextColor(i == menuIndex ? TFT_YELLOW : TFT_WHITE);
+    drawIcon(80, y + 10, i);
+    gfx->setCursor(120, y);
+    gfx->print(menuItems[i]);
   }
-
-  hud.pushSprite(0, 0);
 }
 
 void drawIcon(int x, int y, int type) {
   switch (type) {
-    case 0: hud.drawLine(x-5, y, x+5, y, TFT_WHITE);          break;
-    case 1: hud.drawCircle(x, y, 4, TFT_GREEN);               break;
-    case 2: hud.drawCircle(x, y, 5, TFT_WHITE);               break;
-    case 3: hud.drawFastHLine(x-5, y, 10, TFT_YELLOW);        break;
+    case 0: gfx->drawLine(x-5, y, x+5, y, TFT_WHITE);          break;
+    case 1: gfx->drawCircle(x, y, 4, TFT_GREEN);               break;
+    case 2: gfx->drawCircle(x, y, 5, TFT_WHITE);               break;
+    case 3: gfx->drawFastHLine(x-5, y, 10, TFT_YELLOW);        break;
   }
 }
 
@@ -187,9 +213,9 @@ void handleMenu() {
 
 // ================= TRANSITION (non-blocking) =================
 void screenTransition() {
-  // Simple fade to black – fast enough to feel snappy, no long block
-  for (int i = 0; i < 480; i += 40) {
-    tft.fillRect(i, 0, 40, 320, TFT_BLACK);
+  // Simple wipe to black across the 800x480 panel.
+  for (int i = 0; i < 800; i += 100) {
+    gfx->fillRect(i, 0, 100, 480, TFT_BLACK);
     delay(5);
   }
 }
@@ -203,121 +229,120 @@ void calibrate() {
 
 // ================= HORIZON =================
 void drawHorizon() {
-  const int cx = 240, cy = 160;  // center of 480x320 landscape display
+  const int cx = 400, cy = 240;  // center of 800x480 display
 
   float r = (roll  - rollOffset)  * DEG_TO_RAD;
   int   p = (pitch - pitchOffset) * 3;
 
-  const int len = 500;
+  const int len = 800;
   int x1 = cx - len * cosf(r);
   int y1 = cy - len * sinf(r) + p;
   int x2 = cx + len * cosf(r);
   int y2 = cy + len * sinf(r) + p;
 
   // Fill sky
-  tft.fillRect(0, 0, 480, 320, TFT_NAVY);
+  gfx->fillRect(0, 0, 800, 480, TFT_NAVY);
 
   // Draw ground using the horizon line equation
-  for (int y = 0; y < 320; y += 3) {
+  for (int y = 0; y < 480; y += 3) {
     int denom = (y2 - y1);
     if (denom == 0) denom = 1;
     int x = (y - y1) * (x2 - x1) / denom + x1;
     if (y > y1)
-      tft.drawFastHLine(x,     y, 480 - x, TFT_BROWN);
+      gfx->drawFastHLine(x,     y, 800 - x, TFT_BROWN);
     else
-      tft.drawFastHLine(0,     y, x,        0x3400);   // dark green
+      gfx->drawFastHLine(0,     y, x,        0x3400);   // dark green
   }
 
-  tft.drawLine(x1, y1, x2, y2, TFT_WHITE);
-  drawJeep(240, 296);  // bottom-center: wheel base lands at y=320
+  gfx->drawLine(x1, y1, x2, y2, TFT_WHITE);
+  drawJeep(400, 456);  // bottom-center: wheel base lands at y=480
 }
 
 // ================= JEEP =================
 void drawJeep(int cx, int cy) {
   int x = cx - 35, y = cy - 25;
-  tft.fillRect(x + 10, y + 18, 60, 20, TFT_YELLOW);
-  tft.fillRect(x + 20, y +  8, 30, 10, TFT_YELLOW);
-  tft.fillCircle(x + 20, y + 40, 9, TFT_BLACK);
-  tft.fillCircle(x + 60, y + 40, 9, TFT_BLACK);
+  gfx->fillRect(x + 10, y + 18, 60, 20, TFT_YELLOW);
+  gfx->fillRect(x + 20, y +  8, 30, 10, TFT_YELLOW);
+  gfx->fillCircle(x + 20, y + 40, 9, TFT_BLACK);
+  gfx->fillCircle(x + 60, y + 40, 9, TFT_BLACK);
 }
 
 // ================= OVERLAY =================
+// Drawn directly onto gfx every frame, right after drawHorizon() repaints
+// the full screen — so there's no need for a separate transparent sprite.
 void drawOverlay() {
-  hud.fillSprite(TFT_TRANSPARENT);
-  hud.setTextSize(2);
+  gfx->setTextSize(2);
 
   // Heading
-  hud.setTextColor(TFT_WHITE);
-  hud.setCursor(10, 10);
-  hud.print("HDG:");
-  hud.print((int)(heading - headingOffset + 360) % 360);
+  gfx->setTextColor(TFT_WHITE);
+  gfx->setCursor(20, 20);
+  gfx->print("HDG:");
+  gfx->print((int)(heading - headingOffset + 360) % 360);
 
   // Speed / GPS status
-  hud.setCursor(150, 10);
+  gfx->setCursor(300, 20);
   if (gpsFix) {
-    hud.setTextColor(TFT_GREEN);
-    hud.print(speed_kmh, 1);
-    hud.print("k");
+    gfx->setTextColor(TFT_GREEN);
+    gfx->print(speed_kmh, 1);
+    gfx->print("k");
   } else {
-    hud.setTextColor(TFT_RED);
-    hud.print("NO GPS");
+    gfx->setTextColor(TFT_RED);
+    gfx->print("NO GPS");
   }
 
   // Roll / Pitch
-  hud.setTextColor(TFT_WHITE);
-  hud.setCursor(10,  50); hud.print("R:"); hud.print(roll  - rollOffset,  1);
-  hud.setCursor(150, 50); hud.print("P:"); hud.print(pitch - pitchOffset, 1);
+  gfx->setTextColor(TFT_WHITE);
+  gfx->setCursor(20,  70); gfx->print("R:"); gfx->print(roll  - rollOffset,  1);
+  gfx->setCursor(300, 70); gfx->print("P:"); gfx->print(pitch - pitchOffset, 1);
 
   // Danger warning
   if (fabsf(roll - rollOffset) > 35.0f || fabsf(pitch - pitchOffset) > 35.0f) {
-    hud.setTextColor(TFT_RED);
-    hud.setTextSize(3);
-    hud.setCursor(80, 20);
-    hud.print("DANGER");
+    gfx->setTextColor(TFT_RED);
+    gfx->setTextSize(3);
+    gfx->setCursor(320, 30);
+    gfx->print("DANGER");
   }
-
-  hud.pushSprite(0, 0, TFT_TRANSPARENT);
 }
 
 // ================= GPS SCREEN =================
 void drawGPSScreen() {
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextSize(2);
-  tft.setTextColor(TFT_WHITE);
+  gfx->fillScreen(TFT_BLACK);
+  gfx->setTextSize(2);
+  gfx->setTextColor(TFT_WHITE);
 
   if (!gpsFix) {
-    tft.setCursor(80, 220);
-    tft.setTextColor(TFT_RED);
-    tft.print("NO GPS FIX");
+    gfx->setCursor(320, 230);
+    gfx->setTextColor(TFT_RED);
+    gfx->print("NO GPS FIX");
     return;
   }
 
-  tft.setCursor(20, 80);  tft.print("SPD:"); tft.print(speed_kmh, 1); tft.print(" km/h");
-  tft.setCursor(20, 120); tft.print("LAT:"); tft.print(gps.location.lat(), 5);
-  tft.setCursor(20, 160); tft.print("LON:"); tft.print(gps.location.lng(), 5);
-  tft.setCursor(20, 200); tft.print("SAT:"); tft.print(gps.satellites.value());
-  tft.setCursor(20, 240); tft.print("ALT:"); tft.print(gps.altitude.meters(), 0); tft.print("m");
+  gfx->setCursor(60, 100); gfx->print("SPD:"); gfx->print(speed_kmh, 1); gfx->print(" km/h");
+  gfx->setCursor(60, 160); gfx->print("LAT:"); gfx->print(gps.location.lat(), 5);
+  gfx->setCursor(60, 220); gfx->print("LON:"); gfx->print(gps.location.lng(), 5);
+  gfx->setCursor(60, 280); gfx->print("SAT:"); gfx->print(gps.satellites.value());
+  gfx->setCursor(60, 340); gfx->print("ALT:"); gfx->print(gps.altitude.meters(), 0); gfx->print("m");
 }
 
 // ================= INFO SCREEN =================
 void drawInfoScreen() {
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextSize(2);
-  tft.setTextColor(TFT_WHITE);
+  gfx->fillScreen(TFT_BLACK);
+  gfx->setTextSize(2);
+  gfx->setTextColor(TFT_WHITE);
 
-  tft.setCursor(40, 100); tft.print("Pitch:  "); tft.print(pitch - pitchOffset, 1);
-  tft.setCursor(40, 140); tft.print("Roll:   "); tft.print(roll  - rollOffset,  1);
-  tft.setCursor(40, 180); tft.print("Heading:"); tft.print((int)(heading - headingOffset + 360) % 360);
-  tft.setCursor(40, 220); tft.print("P-off:  "); tft.print(pitchOffset,   1);
-  tft.setCursor(40, 260); tft.print("R-off:  "); tft.print(rollOffset,    1);
+  gfx->setCursor(80, 120); gfx->print("Pitch:  "); gfx->print(pitch - pitchOffset, 1);
+  gfx->setCursor(80, 180); gfx->print("Roll:   "); gfx->print(roll  - rollOffset,  1);
+  gfx->setCursor(80, 240); gfx->print("Heading:"); gfx->print((int)(heading - headingOffset + 360) % 360);
+  gfx->setCursor(80, 300); gfx->print("P-off:  "); gfx->print(pitchOffset,   1);
+  gfx->setCursor(80, 360); gfx->print("R-off:  "); gfx->print(rollOffset,    1);
 }
 
 // ================= BOOT =================
 void showBoot() {
-  tft.fillScreen(TFT_BLACK);
-  tft.setTextSize(3);
-  tft.setTextColor(TFT_GREEN);
-  tft.setCursor(60, 120); tft.print("WRANGLER");
-  tft.setCursor(40, 160); tft.print("SYSTEM");
+  gfx->fillScreen(TFT_BLACK);
+  gfx->setTextSize(4);
+  gfx->setTextColor(TFT_GREEN);
+  gfx->setCursor(260, 200); gfx->print("WRANGLER");
+  gfx->setCursor(310, 260); gfx->print("SYSTEM");
   delay(2000);
 }
