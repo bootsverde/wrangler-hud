@@ -204,7 +204,7 @@ void calibrate() {
 
 // ================= HORIZON =================
 void drawHorizon() {
-  const int cx = 160, cy = 240;
+  const int cx = 240, cy = 160;  // center of 480x320 landscape display
 
   float r = (roll  - rollOffset)  * DEG_TO_RAD;
   int   p = (pitch - pitchOffset) * 3;
@@ -216,21 +216,21 @@ void drawHorizon() {
   int y2 = cy + len * sinf(r) + p;
 
   // Fill sky
-  tft.fillRect(0, 0, 320, 480, TFT_NAVY);
+  tft.fillRect(0, 0, 480, 320, TFT_NAVY);
 
   // Draw ground using the horizon line equation
-  for (int y = 0; y < 480; y += 3) {
+  for (int y = 0; y < 320; y += 3) {
     int denom = (y2 - y1);
     if (denom == 0) denom = 1;
     int x = (y - y1) * (x2 - x1) / denom + x1;
     if (y > y1)
-      tft.drawFastHLine(x,     y, 320 - x, TFT_BROWN);
+      tft.drawFastHLine(x,     y, 480 - x, TFT_BROWN);
     else
       tft.drawFastHLine(0,     y, x,        0x3400);   // dark green
   }
 
   tft.drawLine(x1, y1, x2, y2, TFT_WHITE);
-  drawJeep(cx, cy);
+  drawJeep(240, 296);  // bottom-center: wheel base lands at y=320
 }
 
 // ================= JEEP =================
